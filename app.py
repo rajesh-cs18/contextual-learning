@@ -12,6 +12,15 @@ from datetime import datetime
 import hashlib
 from pathlib import Path
 
+# Import database module
+from database import (
+    init_database, 
+    get_user_hash, 
+    get_usage_count, 
+    increment_usage,
+    get_statistics
+)
+
 # Import PDF export module
 try:
     from pdf_export import create_pdf_export, get_pdf_filename
@@ -27,9 +36,11 @@ genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
 
 # Configuration
 MAX_FREE_CALLS = 3
-USAGE_FILE = Path("usage_tracking.json")
 CONTACT_EMAIL = "raj20032003@gmail.com"
 CONTACT_PHONE = "+92 342 8181914"
+
+# Initialize database
+init_database()
 
 # Page configuration
 st.set_page_config(
@@ -88,82 +99,52 @@ st.markdown("""
         border-radius: 10px;
         margin-top: 20px;
     }
+    .stats-card {
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        color: white;
+        padding: 20px;
+        border-radius: 10px;
+        margin: 10px 0;
+        text-align: center;
+    }
+    .stats-number {
+        font-size: 2.5em;
+        font-weight: bold;
+        margin: 10px 0;
+    }
     </style>
 """, unsafe_allow_html=True)
 
-# Rate Limiting Functions
-def get_user_identifier() -> str:
+# Rate Limiting Functions (Database-based)
+def get_client_info() -> tuple[str, str]:
     """
-    Generate a unique identifier for the user based on session.
-    In Streamlit Cloud, we use session ID as IP is not reliably available.
+    Get client IP and device information
+    Returns: (ip_address, device_info)
     """
-    # Try to get session info, fall back to a persistent session ID
-    if 'user_identifier' not in st.session_state:
-        # Create a semi-persistent identifier
-        try:
-            # Try to access request headers for IP (may not work in all deployments)
-            headers = st.context.headers
-            ip = headers.get("X-Forwarded-For", headers.get("Remote-Addr", "unknown"))
-            identifier = hashlib.md5(ip.encode()).hexdigest()
-        except:
-            # Fallback: use session-based ID that persists across runs
-            import uuid
-            identifier = str(uuid.uuid4())
-        
-        st.session_state.user_identifier = identifier
-    
-    return st.session_state.user_identifier
-
-def load_usage_data() -> dict:
-    """Load usage tracking data from file"""
-    if USAGE_FILE.exists():
-        try:
-            with open(USAGE_FILE, 'r') as f:
-                return json.load(f)
-        except:
-            return {}
-    return {}
-
-def save_usage_data(data: dict):
-    """Save usage tracking data to file"""
     try:
-        with open(USAGE_FILE, 'w') as f:
-            json.dump(data, f, indent=2)
-    except Exception as e:
-        print(f"Error saving usage data: {e}")
-
-def get_usage_count(identifier: str) -> int:
-    """Get the current usage count for a user"""
-    usage_data = load_usage_data()
-    return usage_data.get(identifier, {}).get('count', 0)
-
-def increment_usage(identifier: str):
-    """Increment usage count for a user"""
-    usage_data = load_usage_data()
+        headers = st.context.headers
+        ip = headers.get("X-Forwarded-For", headers.get("X-Real-Ip", headers.get("Remote-Addr", "unknown")))
+        # Get the first IP if there are multiple (proxy chain)
+        if ',' in ip:
+            ip = ip.split(',')[0].strip()
+        device = headers.get("User-Agent", "unknown")
+    except:
+        ip = "unknown"
+        device = "unknown"
     
-    if identifier not in usage_data:
-        usage_data[identifier] = {
-            'count': 0,
-            'first_used': datetime.now().isoformat(),
-            'last_used': datetime.now().isoformat()
-        }
-    
-    usage_data[identifier]['count'] += 1
-    usage_data[identifier]['last_used'] = datetime.now().isoformat()
-    
-    save_usage_data(usage_data)
-    return usage_data[identifier]['count']
+    return ip, device
 
-def check_usage_limit() -> tuple[bool, int]:
+def check_usage_limit() -> tuple[bool, int, str]:
     """
-    Check if user has reached the usage limit.
-    Returns: (can_use, remaining_calls)
+    Check if user has reached the usage limit using database.
+    Returns: (can_use, remaining_calls, user_hash)
     """
-    identifier = get_user_identifier()
-    current_count = get_usage_count(identifier)
+    ip, device = get_client_info()
+    user_hash = get_user_hash(ip, device)
+    current_count = get_usage_count(user_hash)
     remaining = MAX_FREE_CALLS - current_count
     can_use = current_count < MAX_FREE_CALLS
-    return can_use, max(0, remaining)
+    return can_use, max(0, remaining), user_hash
 
 def display_limit_reached():
     """Display message when usage limit is reached"""
@@ -193,6 +174,66 @@ def display_limit_reached():
     """, unsafe_allow_html=True)
     
     st.info("💡 **Tip:** Clear your browser cache and use a different browser/device for additional free trials, or contact us for permanent access!")
+
+def display_statistics():
+    """Display usage statistics on the home page"""
+    try:
+        stats = get_statistics()
+        
+        st.markdown("### 📊 Platform Statistics")
+        
+        col1, col2, col3, col4 = st.columns(4)
+        
+        with col1:
+            st.markdown(f"""
+            <div class="stats-card">
+                <div>👥 Total Users</div>
+                <div class="stats-number">{stats['total_users']}</div>
+            </div>
+            """, unsafe_allow_html=True)
+        
+        with col2:
+            st.markdown(f"""
+            <div class="stats-card">
+                <div>🎯 Total Generations</div>
+                <div class="stats-number">{stats['total_generations']}</div>
+            </div>
+            """, unsafe_allow_html=True)
+        
+        with col3:
+            st.markdown(f"""
+            <div class="stats-card">
+                <div>⚡ Last 24 Hours</div>
+                <div class="stats-number">{stats['recent_activity']}</div>
+            </div>
+            """, unsafe_allow_html=True)
+        
+        with col4:
+            st.markdown(f"""
+            <div class="stats-card">
+                <div>🔥 Active Users</div>
+                <div class="stats-number">{stats['users_at_limit']}</div>
+            </div>
+            """, unsafe_allow_html=True)
+        
+        # Popular topics and fields
+        if stats['popular_topics']:
+            col_topics, col_fields = st.columns(2)
+            
+            with col_topics:
+                st.markdown("**🔝 Popular Topics**")
+                for topic, count in stats['popular_topics'][:3]:
+                    st.write(f"• {topic} ({count})")
+            
+            with col_fields:
+                st.markdown("**📚 Popular Fields**")
+                for field, count in stats['popular_fields'][:3]:
+                    st.write(f"• {field} ({count})")
+        
+        st.markdown("---")
+    except Exception as e:
+        # Silently fail if statistics can't be loaded
+        pass
 
 # Initialize session state
 if 'generated_content' not in st.session_state:
@@ -394,6 +435,9 @@ def export_to_markdown(content: dict) -> str:
 st.title("🎓 Theory2Practice AI Bridge")
 st.markdown("*Connecting Academic Concepts to Real-World Industry Applications*")
 
+# Display statistics
+display_statistics()
+
 # Sidebar
 with st.sidebar:
     st.header("⚙️ Configuration")
@@ -445,7 +489,7 @@ with st.sidebar:
     st.markdown("---")
     
     # Check usage limit and display info
-    can_use, remaining_calls = check_usage_limit()
+    can_use, remaining_calls, user_hash = check_usage_limit()
     
     if can_use:
         if remaining_calls > 0:
@@ -476,9 +520,10 @@ elif generate_button:
             content = generate_use_cases(topic, field, difficulty_level, num_cases)
             
             if content:
-                # Increment usage count on successful generation
-                identifier = get_user_identifier()
-                new_count = increment_usage(identifier)
+                # Increment usage count on successful generation using database
+                ip, device = get_client_info()
+                user_hash = get_user_hash(ip, device)
+                new_count = increment_usage(user_hash, ip, device, topic, field, difficulty_level)
                 
                 st.session_state.generated_content = content
                 st.session_state.history.append({

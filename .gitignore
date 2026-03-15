@@ -54,3 +54,9 @@ exports/
 *.pdf
 *.json
 !requirements.txt
+
+# Database files
+*.db
+*.db-journal
+*.sqlite
+*.sqlite3
