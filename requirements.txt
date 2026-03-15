@@ -1,0 +1,11 @@
+# Core Dependencies
+streamlit>=1.31.0
+google-generativeai>=0.3.2
+python-dotenv>=1.0.0
+
+# PDF Export (Optional Feature)
+reportlab>=4.0.9
+markdown>=3.5.2
+
+# Additional Utilities
+python-dateutil>=2.8.2
