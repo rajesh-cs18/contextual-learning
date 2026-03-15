@@ -118,9 +118,17 @@ st.markdown("""
 # Rate Limiting Functions (Database-based)
 def get_client_info() -> tuple[str, str]:
     """
-    Get client IP and device information
+    Get client IP and device information with session persistence
     Returns: (ip_address, device_info)
     """
+    # First, check if we already have this info in session state
+    if 'client_ip' in st.session_state and 'client_device' in st.session_state:
+        return st.session_state.client_ip, st.session_state.client_device
+    
+    # Try to get from headers
+    ip = "unknown"
+    device = "unknown"
+    
     try:
         headers = st.context.headers
         ip = headers.get("X-Forwarded-For", headers.get("X-Real-Ip", headers.get("Remote-Addr", "unknown")))
@@ -128,9 +136,24 @@ def get_client_info() -> tuple[str, str]:
         if ',' in ip:
             ip = ip.split(',')[0].strip()
         device = headers.get("User-Agent", "unknown")
-    except:
-        ip = "unknown"
-        device = "unknown"
+    except Exception as e:
+        # Headers not available, use session-based identifier
+        pass
+    
+    # If still unknown, create a persistent session identifier
+    if ip == "unknown" or device == "unknown":
+        # Generate a unique session-based identifier that persists across refreshes
+        if 'session_id' not in st.session_state:
+            import uuid
+            st.session_state.session_id = str(uuid.uuid4())
+        
+        # Use session ID as a fallback "IP"
+        ip = f"session_{st.session_state.session_id}" if ip == "unknown" else ip
+        device = f"streamlit_client_{st.session_state.session_id}" if device == "unknown" else device
+    
+    # Store in session state for consistency across reruns
+    st.session_state.client_ip = ip
+    st.session_state.client_device = device
     
     return ip, device
 
@@ -139,8 +162,12 @@ def check_usage_limit() -> tuple[bool, int, str]:
     Check if user has reached the usage limit using database.
     Returns: (can_use, remaining_calls, user_hash)
     """
-    ip, device = get_client_info()
-    user_hash = get_user_hash(ip, device)
+    # Cache user_hash in session state to ensure consistency
+    if 'user_hash' not in st.session_state:
+        ip, device = get_client_info()
+        st.session_state.user_hash = get_user_hash(ip, device)
+    
+    user_hash = st.session_state.user_hash
     current_count = get_usage_count(user_hash)
     remaining = MAX_FREE_CALLS - current_count
     can_use = current_count < MAX_FREE_CALLS
@@ -497,6 +524,14 @@ with st.sidebar:
     
     generate_button = st.button("🚀 Generate Use Cases", type="primary", disabled=not can_use)
     
+    # Debug info - show user identifier
+    with st.expander("🔍 Session Info (Debug)", expanded=False):
+        st.caption(f"Session ID: {user_hash[:12]}...")
+        ip, device = get_client_info()
+        st.caption(f"IP: {ip[:20]}...")
+        st.caption(f"Device: {device[:30]}...")
+        st.caption("This should stay the same on page refresh")
+    
     # API Key Status
     st.markdown("---")
     api_key = os.getenv("GEMINI_API_KEY")
@@ -521,8 +556,9 @@ elif generate_button:
             
             if content:
                 # Increment usage count on successful generation using database
+                # Use cached session values for consistency
                 ip, device = get_client_info()
-                user_hash = get_user_hash(ip, device)
+                user_hash = st.session_state.user_hash  # Use cached hash
                 new_count = increment_usage(user_hash, ip, device, topic, field, difficulty_level)
                 
                 st.session_state.generated_content = content
