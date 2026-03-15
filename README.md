@@ -25,9 +25,10 @@ A Streamlit-powered application that helps professors and educators demonstrate 
   - Business/societal impact
 
 ### Advanced Features
+- **🆓 Free Trial System**: 3 free generations per device with usage tracking
 - **📊 Related Skills**: Suggests complementary topics students should learn
 - **🛤️ Learning Path**: Provides next-step recommendations
-- **📥 Export Options**: Download as Markdown or JSON
+- **📥 Export Options**: Download as Markdown, JSON, or PDF
 - **📜 Generation History**: Track previously generated topics
 - **🎨 Beautiful UI**: Custom-styled components with visual hierarchy
 
@@ -104,6 +105,20 @@ The app will open in your browser at `http://localhost:8501`
 - Use Case 3: Cache Management in Redis
 
 Each with detailed explanations, job roles (Backend Engineer, Database Administrator), and learning paths.
+
+---
+
+## 🆓 Free Trial & Usage Limits
+
+The application includes a **3 free generations per device** limit to manage API costs. After using your free trials:
+
+- You'll see a contact page with options for extended access
+- Usage is tracked per session/device
+- For unlimited access, institutional licenses, or custom deployments, contact:
+  - **Email**: raj20032003@gmail.com
+  - **Phone**: +92 342 8181914
+
+See [RATE_LIMITING.md](RATE_LIMITING.md) for technical details.
 
 ---
 

@@ -9,6 +9,8 @@ import os
 from dotenv import load_dotenv
 import json
 from datetime import datetime
+import hashlib
+from pathlib import Path
 
 # Import PDF export module
 try:
@@ -22,6 +24,12 @@ load_dotenv()
 
 # Configure Gemini API
 genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
+
+# Configuration
+MAX_FREE_CALLS = 3
+USAGE_FILE = Path("usage_tracking.json")
+CONTACT_EMAIL = "raj20032003@gmail.com"
+CONTACT_PHONE = "+92 342 8181914"
 
 # Page configuration
 st.set_page_config(
@@ -65,8 +73,126 @@ st.markdown("""
         color: white;
         font-weight: bold;
     }
+    .limit-reached-box {
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        color: white;
+        padding: 30px;
+        border-radius: 15px;
+        text-align: center;
+        margin: 20px 0;
+        box-shadow: 0 10px 25px rgba(0,0,0,0.2);
+    }
+    .contact-info {
+        background-color: rgba(255, 255, 255, 0.2);
+        padding: 20px;
+        border-radius: 10px;
+        margin-top: 20px;
+    }
     </style>
 """, unsafe_allow_html=True)
+
+# Rate Limiting Functions
+def get_user_identifier() -> str:
+    """
+    Generate a unique identifier for the user based on session.
+    In Streamlit Cloud, we use session ID as IP is not reliably available.
+    """
+    # Try to get session info, fall back to a persistent session ID
+    if 'user_identifier' not in st.session_state:
+        # Create a semi-persistent identifier
+        try:
+            # Try to access request headers for IP (may not work in all deployments)
+            headers = st.context.headers
+            ip = headers.get("X-Forwarded-For", headers.get("Remote-Addr", "unknown"))
+            identifier = hashlib.md5(ip.encode()).hexdigest()
+        except:
+            # Fallback: use session-based ID that persists across runs
+            import uuid
+            identifier = str(uuid.uuid4())
+        
+        st.session_state.user_identifier = identifier
+    
+    return st.session_state.user_identifier
+
+def load_usage_data() -> dict:
+    """Load usage tracking data from file"""
+    if USAGE_FILE.exists():
+        try:
+            with open(USAGE_FILE, 'r') as f:
+                return json.load(f)
+        except:
+            return {}
+    return {}
+
+def save_usage_data(data: dict):
+    """Save usage tracking data to file"""
+    try:
+        with open(USAGE_FILE, 'w') as f:
+            json.dump(data, f, indent=2)
+    except Exception as e:
+        print(f"Error saving usage data: {e}")
+
+def get_usage_count(identifier: str) -> int:
+    """Get the current usage count for a user"""
+    usage_data = load_usage_data()
+    return usage_data.get(identifier, {}).get('count', 0)
+
+def increment_usage(identifier: str):
+    """Increment usage count for a user"""
+    usage_data = load_usage_data()
+    
+    if identifier not in usage_data:
+        usage_data[identifier] = {
+            'count': 0,
+            'first_used': datetime.now().isoformat(),
+            'last_used': datetime.now().isoformat()
+        }
+    
+    usage_data[identifier]['count'] += 1
+    usage_data[identifier]['last_used'] = datetime.now().isoformat()
+    
+    save_usage_data(usage_data)
+    return usage_data[identifier]['count']
+
+def check_usage_limit() -> tuple[bool, int]:
+    """
+    Check if user has reached the usage limit.
+    Returns: (can_use, remaining_calls)
+    """
+    identifier = get_user_identifier()
+    current_count = get_usage_count(identifier)
+    remaining = MAX_FREE_CALLS - current_count
+    can_use = current_count < MAX_FREE_CALLS
+    return can_use, max(0, remaining)
+
+def display_limit_reached():
+    """Display message when usage limit is reached"""
+    st.markdown(f"""
+    <div class="limit-reached-box">
+        <h2>🎓 Free Trial Limit Reached</h2>
+        <p style="font-size: 1.2em; margin: 20px 0;">
+            You've used all <strong>{MAX_FREE_CALLS} free generations</strong>!<br>
+            Thank you for trying Theory2Practice AI Bridge.
+        </p>
+        <div class="contact-info">
+            <h3>📞 Want More Access?</h3>
+            <p style="font-size: 1.1em; margin: 10px 0;">
+                Contact us for unlimited access or custom solutions:
+            </p>
+            <p style="font-size: 1.3em; font-weight: bold; margin: 15px 0;">
+                📧 {CONTACT_EMAIL}
+            </p>
+            <p style="font-size: 1.3em; font-weight: bold; margin: 15px 0;">
+                📱 {CONTACT_PHONE}
+            </p>
+            <p style="font-size: 0.9em; margin-top: 20px; opacity: 0.9;">
+                We offer institutional licenses, bulk access, and custom integrations.
+            </p>
+        </div>
+    </div>
+    """, unsafe_allow_html=True)
+    
+    st.info("💡 **Tip:** Clear your browser cache and use a different browser/device for additional free trials, or contact us for permanent access!")
 
 # Initialize session state
 if 'generated_content' not in st.session_state:
@@ -318,7 +444,14 @@ with st.sidebar:
     
     st.markdown("---")
     
-    generate_button = st.button("🚀 Generate Use Cases", type="primary")
+    # Check usage limit and display info
+    can_use, remaining_calls = check_usage_limit()
+    
+    if can_use:
+        if remaining_calls > 0:
+            st.info(f"🆓 Free trials remaining: **{remaining_calls}/{MAX_FREE_CALLS}**")
+    
+    generate_button = st.button("🚀 Generate Use Cases", type="primary", disabled=not can_use)
     
     # API Key Status
     st.markdown("---")
@@ -330,7 +463,10 @@ with st.sidebar:
         st.info("Set GEMINI_API_KEY in your .env file")
 
 # Main Content Area
-if generate_button:
+if not check_usage_limit()[0]:
+    # Display limit reached message
+    display_limit_reached()
+elif generate_button:
     if not topic:
         st.warning("⚠️ Please enter a topic to generate use cases.")
     elif not api_key:
@@ -340,6 +476,10 @@ if generate_button:
             content = generate_use_cases(topic, field, difficulty_level, num_cases)
             
             if content:
+                # Increment usage count on successful generation
+                identifier = get_user_identifier()
+                new_count = increment_usage(identifier)
+                
                 st.session_state.generated_content = content
                 st.session_state.history.append({
                     'topic': topic,
@@ -347,6 +487,13 @@ if generate_button:
                     'timestamp': datetime.now().strftime("%Y-%m-%d %H:%M:%S")
                 })
                 st.success("✅ Use cases generated successfully!")
+                
+                # Show updated remaining count
+                remaining = MAX_FREE_CALLS - new_count
+                if remaining > 0:
+                    st.info(f"🎯 You have **{remaining}** free generation{'s' if remaining != 1 else ''} remaining!")
+                else:
+                    st.warning(f"⚠️ This was your last free generation! Contact {CONTACT_EMAIL} for more access.")
 
 # Display generated content
 if st.session_state.generated_content:
