@@ -168,11 +168,26 @@ def reset_user_count(user_hash):
     conn = get_connection()
     cursor = conn.cursor()
     
+    # Delete their generation history
     cursor.execute("DELETE FROM generation_history WHERE user_hash = ?", (user_hash,))
+    # Reset usage count to 0
     cursor.execute("UPDATE usage_tracking SET usage_count = 0 WHERE user_hash = ?", (user_hash,))
     
     conn.commit()
     conn.close()
+
+def reset_multiple_users(user_hashes: list):
+    """Reset multiple users' usage counts to 0"""
+    conn = get_connection()
+    cursor = conn.cursor()
+    
+    for user_hash in user_hashes:
+        cursor.execute("DELETE FROM generation_history WHERE user_hash = ?", (user_hash,))
+        cursor.execute("UPDATE usage_tracking SET usage_count = 0 WHERE user_hash = ?", (user_hash,))
+    
+    conn.commit()
+    conn.close()
+    return len(user_hashes)
 
 # Title
 st.title("🔐 Admin Dashboard")
@@ -217,6 +232,38 @@ with tab1:
     users_df = load_usage_data()
     
     if len(users_df) > 0:
+        # Quick Actions
+        col_act1, col_act2 = st.columns(2)
+        with col_act1:
+            users_at_limit = len(users_df[users_df['usage_count'] >= 3])
+            if st.button(f"🔄 Reset All Users at Limit ({users_at_limit})", key="bulk_reset", disabled=users_at_limit == 0):
+                conn = get_connection()
+                cursor = conn.cursor()
+                cursor.execute("UPDATE usage_tracking SET usage_count = 0 WHERE usage_count >= 3")
+                cursor.execute("DELETE FROM generation_history WHERE user_hash IN (SELECT user_hash FROM usage_tracking WHERE usage_count >= 3)")
+                conn.commit()
+                conn.close()
+                st.success(f"✅ Reset {users_at_limit} users!")
+                st.rerun()
+        
+        with col_act2:
+            if st.button("🔄 Reset ALL Users to 0", key="reset_all_users"):
+                if st.session_state.get('confirm_reset_all', False):
+                    conn = get_connection()
+                    cursor = conn.cursor()
+                    cursor.execute("UPDATE usage_tracking SET usage_count = 0")
+                    cursor.execute("DELETE FROM generation_history")
+                    conn.commit()
+                    conn.close()
+                    st.session_state.confirm_reset_all = False
+                    st.success(f"✅ All users reset!")
+                    st.rerun()
+                else:
+                    st.session_state.confirm_reset_all = True
+                    st.warning("⚠️ Click again to confirm")
+        
+        st.markdown("---")
+        
         # Display filters
         col1, col2 = st.columns(2)
         with col1:
@@ -236,20 +283,34 @@ with tab1:
         else:
             users_df = users_df.sort_values('usage_count', ascending=False)
         
-        # Display data
-        st.dataframe(
-            users_df,
-            use_container_width=True,
-            hide_index=True,
-            column_config={
-                "user_hash": st.column_config.TextColumn("User Hash", width="small"),
-                "ip_address": st.column_config.TextColumn("IP Address", width="medium"),
-                "device_info": st.column_config.TextColumn("Device", width="large"),
-                "usage_count": st.column_config.NumberColumn("Usage", width="small"),
-                "first_used": st.column_config.DatetimeColumn("First Used", width="medium"),
-                "last_used": st.column_config.DatetimeColumn("Last Used", width="medium"),
-            }
-        )
+        # Display data with actions
+        st.markdown(f"**Showing {len(users_df)} users**")
+        
+        for idx, row in users_df.iterrows():
+            with st.container():
+                col1, col2, col3, col4 = st.columns([3, 2, 1, 1])
+                
+                with col1:
+                    st.markdown(f"**{row['ip_address'][:30]}**")
+                    st.caption(f"Hash: {row['user_hash'][:16]}...")
+                
+                with col2:
+                    st.markdown(f"Device: {row['device_info'][:40]}...")
+                    st.caption(f"Last used: {row['last_used']}")
+                
+                with col3:
+                    if row['usage_count'] >= 3:
+                        st.error(f"🔴 {row['usage_count']}/3")
+                    else:
+                        st.success(f"✅ {row['usage_count']}/3")
+                
+                with col4:
+                    if st.button("🔄", key=f"reset_{row['id']}", help="Reset this user"):
+                        reset_user_count(row['user_hash'])
+                        st.success("Reset!")
+                        st.rerun()
+                
+                st.markdown("---")
         
         # Download button
         csv = users_df.to_csv(index=False)
@@ -351,7 +412,31 @@ with tab3:
         if search_type == "IP Address":
             query = "SELECT * FROM usage_tracking WHERE ip_address LIKE ?"
             df = pd.read_sql_query(query, conn, params=(f"%{search_query}%",))
-            st.dataframe(df, use_container_width=True)
+            
+            if len(df) > 0:
+                st.markdown(f"**Found {len(df)} user(s)**")
+                st.dataframe(df, use_container_width=True)
+                
+                # Quick actions for found users
+                st.markdown("---")
+                st.markdown("**Quick Actions**")
+                col1, col2 = st.columns(2)
+                
+                with col1:
+                    if st.button(f"🔄 Reset All {len(df)} Users", key="reset_search_ip"):
+                        user_hashes = df['user_hash'].tolist()
+                        count = reset_multiple_users(user_hashes)
+                        st.success(f"✅ Reset {count} users!")
+                        st.rerun()
+                
+                with col2:
+                    if st.button(f"🗑️ Delete All {len(df)} Users", key="delete_search_ip"):
+                        for user_hash in df['user_hash'].tolist():
+                            delete_user(user_hash)
+                        st.success(f"✅ Deleted {len(df)} users!")
+                        st.rerun()
+            else:
+                st.info("No users found with that IP address.")
             
         elif search_type == "User Hash":
             # Get user info
@@ -360,15 +445,39 @@ with tab3:
             
             if len(user_df) > 0:
                 st.markdown("**User Information**")
-                st.dataframe(user_df, use_container_width=True)
+                
+                for idx, user in user_df.iterrows():
+                    col1, col2, col3 = st.columns([3, 1, 1])
+                    
+                    with col1:
+                        st.markdown(f"**IP:** {user['ip_address']}")
+                        st.caption(f"Hash: {user['user_hash']}")
+                        st.caption(f"Usage: {user['usage_count']}/3")
+                    
+                    with col2:
+                        if st.button("🔄 Reset", key=f"reset_hash_{idx}"):
+                            reset_user_count(user['user_hash'])
+                            st.success("✅ Reset!")
+                            st.rerun()
+                    
+                    with col3:
+                        if st.button("🗑️ Delete", key=f"delete_hash_{idx}"):
+                            delete_user(user['user_hash'])
+                            st.success("✅ Deleted!")
+                            st.rerun()
+                    
+                    st.markdown("---")
                 
                 # Get their history
                 user_hash = user_df.iloc[0]['user_hash']
                 query = "SELECT * FROM generation_history WHERE user_hash = ?"
                 history_df = pd.read_sql_query(query, conn, params=(user_hash,))
                 
-                st.markdown("**Generation History**")
-                st.dataframe(history_df, use_container_width=True)
+                st.markdown(f"**Generation History ({len(history_df)} records)**")
+                if len(history_df) > 0:
+                    st.dataframe(history_df, use_container_width=True)
+                else:
+                    st.info("No generation history.")
             else:
                 st.warning("No user found with that hash.")
                 
@@ -380,7 +489,12 @@ with tab3:
                 WHERE gh.topic LIKE ?
             """
             df = pd.read_sql_query(query, conn, params=(f"%{search_query}%",))
-            st.dataframe(df, use_container_width=True)
+            
+            if len(df) > 0:
+                st.markdown(f"**Found {len(df)} generations**")
+                st.dataframe(df, use_container_width=True)
+            else:
+                st.info("No topics found matching your search.")
         
         conn.close()
 
@@ -388,13 +502,72 @@ with tab3:
 with tab4:
     st.markdown("### ⚙️ Database Management")
     
+    # Quick stats
+    users_df = load_usage_data()
+    total_users = len(users_df)
+    users_at_limit = len(users_df[users_df['usage_count'] >= 3]) if total_users > 0 else 0
+    users_active = len(users_df[users_df['usage_count'] > 0]) if total_users > 0 else 0
+    
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        st.metric("Total Users", total_users)
+    with col2:
+        st.metric("Users at Limit (3/3)", users_at_limit)
+    with col3:
+        st.metric("Active Users", users_active)
+    
+    st.markdown("---")
     st.warning("⚠️ **Warning**: These actions cannot be undone!")
+    st.markdown("---")
+    
+    # Bulk Reset Options
+    st.markdown("#### 🔄 Bulk Reset Options")
     
     col1, col2 = st.columns(2)
     
     with col1:
-        st.markdown("#### Reset Specific User")
-        users_df = load_usage_data()
+        st.markdown("**Reset by Usage Count**")
+        min_usage = st.number_input("Reset users with usage >=", min_value=1, max_value=3, value=3)
+        
+        affected = len(users_df[users_df['usage_count'] >= min_usage]) if total_users > 0 else 0
+        
+        if st.button(f"🔄 Reset {affected} Users (>= {min_usage} uses)", disabled=affected == 0):
+            conn = get_connection()
+            cursor = conn.cursor()
+            cursor.execute(f"UPDATE usage_tracking SET usage_count = 0 WHERE usage_count >= {min_usage}")
+            cursor.execute(f"DELETE FROM generation_history WHERE user_hash IN (SELECT user_hash FROM usage_tracking WHERE usage_count >= {min_usage})")
+            conn.commit()
+            conn.close()
+            st.success(f"✅ Reset {affected} users!")
+            st.rerun()
+    
+    with col2:
+        st.markdown("**Reset Inactive Users**")
+        days_inactive = st.number_input("Days inactive", min_value=1, max_value=365, value=30)
+        
+        if st.button(f"🔄 Reset Users Inactive > {days_inactive} days"):
+            conn = get_connection()
+            cursor = conn.cursor()
+            cursor.execute(f"""
+                UPDATE usage_tracking 
+                SET usage_count = 0 
+                WHERE last_used < datetime('now', '-{days_inactive} days')
+            """)
+            affected = cursor.rowcount
+            conn.commit()
+            conn.close()
+            st.success(f"✅ Reset {affected} inactive users!")
+            st.rerun()
+    
+    st.markdown("---")
+    
+    # Individual User Management
+    st.markdown("#### 👤 Individual User Management")
+    
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        st.markdown("**Reset Specific User**")
         if len(users_df) > 0:
             # Create display options
             user_options = {}
@@ -413,7 +586,7 @@ with tab4:
             st.info("No users to reset.")
     
     with col2:
-        st.markdown("#### Delete Specific User")
+        st.markdown("**Delete Specific User**")
         if len(users_df) > 0:
             selected_user_del = st.selectbox("Select user to delete", options=list(user_options.keys()), key="delete_user")
             
@@ -430,18 +603,45 @@ with tab4:
     # Dangerous actions
     st.markdown("#### 🚨 Dangerous Actions")
     
-    if st.button("🗑️ Clear All Data (Delete Everything)", type="primary"):
-        confirm = st.checkbox("I understand this will delete ALL data permanently")
-        if confirm:
-            if st.button("⚠️ CONFIRM DELETE ALL"):
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        if st.button("🔄 Reset ALL Users to 0", type="primary"):
+            if 'confirm_bulk_reset' not in st.session_state:
+                st.session_state.confirm_bulk_reset = False
+            
+            if st.session_state.confirm_bulk_reset:
+                conn = get_connection()
+                cursor = conn.cursor()
+                cursor.execute("UPDATE usage_tracking SET usage_count = 0")
+                cursor.execute("DELETE FROM generation_history")
+                conn.commit()
+                conn.close()
+                st.session_state.confirm_bulk_reset = False
+                st.success(f"✅ All {total_users} users reset!")
+                st.rerun()
+            else:
+                st.session_state.confirm_bulk_reset = True
+                st.warning("⚠️ Click again to confirm!")
+    
+    with col2:
+        if st.button("🗑️ Clear All Data (Delete Everything)", type="primary"):
+            if 'confirm_delete_all' not in st.session_state:
+                st.session_state.confirm_delete_all = False
+            
+            if st.session_state.confirm_delete_all:
                 conn = get_connection()
                 cursor = conn.cursor()
                 cursor.execute("DELETE FROM generation_history")
                 cursor.execute("DELETE FROM usage_tracking")
                 conn.commit()
                 conn.close()
+                st.session_state.confirm_delete_all = False
                 st.success("✅ All data cleared!")
                 st.rerun()
+            else:
+                st.session_state.confirm_delete_all = True
+                st.warning("⚠️ Click again to confirm deletion of ALL data!")
 
 # Footer
 st.markdown("---")

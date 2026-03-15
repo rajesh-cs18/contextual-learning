@@ -458,6 +458,67 @@ def export_to_markdown(content: dict) -> str:
     
     return md
 
+def show_terms_and_conditions():
+    """Display terms and conditions that user must accept"""
+    st.markdown("""
+    <div style='background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); 
+         padding: 30px; border-radius: 15px; color: white; margin: 20px 0;'>
+        <h2 style='text-align: center; margin-bottom: 20px;'>📋 Terms of Service & Disclaimer</h2>
+    </div>
+    """, unsafe_allow_html=True)
+    
+    st.markdown("""
+    ### Welcome to Theory2Practice AI Bridge!
+    
+    Before you begin, please read and accept the following terms:
+    
+    #### 📚 Educational Purpose
+    - This platform is designed **exclusively for educational purposes**
+    - It helps students understand how academic concepts apply to real-world scenarios
+    - The content is AI-generated and should be used as a learning aid, not as authoritative information
+    
+    #### 🔒 Data Collection & Privacy
+    - **We collect and store your search queries, topics, and generated outputs**
+    - This data is used to:
+        - Improve the quality of generated content
+        - Analyze learning patterns and popular topics
+        - Enhance the educational experience for all users
+    - We also track your device and IP information for rate limiting purposes
+    - Your data is stored securely and used only for platform improvement
+    
+    #### ⚠️ Important Disclaimers
+    - AI-generated content may contain inaccuracies or outdated information
+    - Always verify important information with authoritative sources
+    - This is not professional advice (legal, financial, medical, etc.)
+    - We limit free usage to **3 generations per device** for fair access
+    
+    #### 📞 Contact Information
+    - For questions, concerns, or data removal requests, contact:
+        - 📧 Email: raj20032003@gmail.com
+        - 📱 Phone: +92 342 8181914
+    
+    ---
+    
+    By clicking "I Accept" below, you acknowledge that you have read and agree to these terms.
+    """)
+    
+    col1, col2, col3 = st.columns([1, 2, 1])
+    with col2:
+        if st.button("✅ I Accept - Continue to App", type="primary", use_container_width=True):
+            st.session_state.terms_accepted = True
+            st.rerun()
+    
+    st.markdown("---")
+    st.info("💡 If you do not accept these terms, please close this page.")
+
+# Check Terms Acceptance
+if 'terms_accepted' not in st.session_state:
+    st.session_state.terms_accepted = False
+
+if not st.session_state.terms_accepted:
+    show_terms_and_conditions()
+    st.stop()
+
 # Main App UI
 st.title("🎓 Theory2Practice AI Bridge")
 st.markdown("*Connecting Academic Concepts to Real-World Industry Applications*")
@@ -540,6 +601,23 @@ with st.sidebar:
     else:
         st.error("❌ API Key Missing")
         st.info("Set GEMINI_API_KEY in your .env file")
+    
+    # Terms acceptance info
+    st.markdown("---")
+    st.caption("✅ Terms accepted")
+    with st.expander("📋 View Terms & Privacy", expanded=False):
+        st.markdown("""
+        **Data We Collect:**
+        - Search queries and generated content
+        - Device and IP information
+        - Usage statistics
+        
+        **Purpose:** Educational improvement and fair usage
+        
+        **Contact for questions:**
+        - 📧 raj20032003@gmail.com
+        - 📱 +92 342 8181914
+        """)
 
 # Main Content Area
 if not check_usage_limit()[0]:
