@@ -44,7 +44,7 @@ git push -u origin main
    - Click "Advanced settings" before deploying
    - In the "Secrets" section, add:
      ```toml
-     GEMINI_API_KEY = "AIzaSyAQGNuqzDwyWtebjMMOb-fPG_tKukjAB5o"
+     GEMINI_API_KEY = "AIzasdSyAQGNuqzDwyWtebjMdR-fPG_tKukjA5rt"
      ```
    - Click "Save"
 
