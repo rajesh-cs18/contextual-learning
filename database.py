@@ -54,11 +54,12 @@ def init_database():
 
 def get_user_hash(ip_address: str, device_info: str) -> str:
     """
-    Generate a unique hash from IP and device info
-    This ensures the same device from the same IP always gets the same hash
+    Generate a unique hash based primarily on device info
+    This ensures the same device is recognized even if IP changes
+    IP is stored separately for tracking but not used in hash
     """
-    combined = f"{ip_address}|{device_info}"
-    return hashlib.sha256(combined.encode()).hexdigest()
+    # Use only device info for hash to track same device across IP changes
+    return hashlib.sha256(device_info.encode()).hexdigest()
 
 def get_usage_count(user_hash: str) -> int:
     """Get the current usage count for a user"""
@@ -78,6 +79,7 @@ def get_usage_count(user_hash: str) -> int:
 def increment_usage(user_hash: str, ip_address: str, device_info: str, topic: str, field: str, difficulty_level: str) -> int:
     """
     Increment usage count for a user and log the generation
+    Updates IP address if it has changed (same device, different network)
     Returns the new usage count
     """
     conn = sqlite3.connect(DB_FILE)
